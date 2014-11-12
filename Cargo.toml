@@ -1,6 +1,6 @@
 [package]
 
-name = "pg-typeprovider"
+name = "pg_typeprovider"
 version = "0.0.1"
 authors = ["Jared Roesch <roeschinc@gmail.com>"]
 
