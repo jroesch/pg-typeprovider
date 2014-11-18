@@ -19,7 +19,9 @@ use syntax::parse::token::intern;
 use rustc::plugin::Registry;
 
 use std::collections::HashMap;
-use postgres::{Connection, NoSsl};
+use postgres::{Connection, SslMode};
+
+use self::PgType::{PgInt, PgBool, PgString, PgTime};
 
 fn expand_pg_table(cx: &mut ExtCtxt, sp: Span, args: &[TokenTree])
         -> Box<MacResult + 'static> {
@@ -34,7 +36,7 @@ fn expand_pg_table(cx: &mut ExtCtxt, sp: Span, args: &[TokenTree])
     };
 
     // Open a connection to PG.
-    let conn = Connection::connect("postgres://jroesch@localhost/gradr-production", &NoSsl)
+    let conn = Connection::connect("postgres://jroesch@localhost/gradr-production", &SslMode::None)
             .unwrap();
 
     let schema: HashMap<String, PgType> = schema_for(conn, &table_name);
