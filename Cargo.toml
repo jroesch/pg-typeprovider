@@ -7,6 +7,9 @@ authors = ["Jared Roesch <roeschinc@gmail.com>"]
 [dependencies.postgres]
 git = "https://github.com/sfackler/rust-postgres.git"
 
+[dependencies.time]
+git = "https://github.com/rust-lang/time.git"
+
 [lib]
 name = "pg_typeprovider"
 path = "src/table.rs"
