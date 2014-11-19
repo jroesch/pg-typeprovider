@@ -22,6 +22,7 @@ use std::collections::HashMap;
 use postgres::{Connection, SslMode};
 
 use self::PgType::{PgInt, PgBool, PgString, PgTime};
+use self::TableKind::{Full, Insert, Search};
 
 fn expand_pg_table(cx: &mut ExtCtxt, sp: Span, args: &[TokenTree]) -> Box<MacResult + 'static> {
 
@@ -44,7 +45,8 @@ fn expand_pg_table(cx: &mut ExtCtxt, sp: Span, args: &[TokenTree]) -> Box<MacRes
     //     debug!("FieldName: {}; Type: {}", name, ty)
     // }
 
-    let (template_def, full_def) = struct_defs_for(cx, sp, &schema);
+    let template_def = struct_def_for(cx, sp, &schema, &Insert);
+    let full_def = struct_def_for(cx, sp, &schema, &Full);
 
     let (template_name, full_name) = structify(&table_name);
 
@@ -98,7 +100,7 @@ impl PgType {
         }
     }
 
-    pub fn to_rust_type(&self, cx: &mut ExtCtxt, sp: Span) -> P<ast::Ty> {
+    pub fn to_rust_type(&self, cx: &ExtCtxt, sp: Span) -> P<ast::Ty> {
         match self {
             &PgInt => cx.ty_ident(sp, ast::Ident::new(intern("int"))),
             &PgBool => cx.ty_ident(sp, ast::Ident::new(intern("bool"))),
@@ -162,42 +164,57 @@ fn insert_line_and_keys<'a>(table_name: &'a str, schema: &'a HashMap<String, PgT
                         join(&values.iter().map(|s| s.as_slice()).collect(), ", "));
     (query, keys)
 }
-    
-// Returns a pair of template, full struct
-// Templates are used strictly for making new records, and are missing the
-// all-important id field.  The full version corresponds to something in the
-// database
-fn struct_defs_for(ecx: &mut ExtCtxt, span: Span, schema: &HashMap<String, PgType>) -> (ast::StructDef, ast::StructDef) {
-    assert!(schema.get(&"id".to_string()).map(|t| t == &PgInt).unwrap_or(false),
-            "Need an id field with type int");
-    
-    let mut template_fields = Vec::new();
-    let mut full_fields = Vec::new();
 
-    for (name, ty) in schema.iter() {
-        let field = struct_field_for(ecx, span, name.as_slice(), ty);
-        full_fields.push(field.clone());
-        if name.as_slice() != "id" {
-            template_fields.push(field);
+// There are three kinds of struct definitions for a table T:
+// -T (Full): a record returned from the database.  This has an id field we should
+//  not be able to modify.
+// -TInsertTemplate: A record we want to go into the database.  This is missing
+//  the id field, which will be put in by the database. (Insert)
+// -TSearchTemplate: A way to search the database for a given kind of record.
+//  This has all the fields as a T, except they are all Option.  If we have
+//  Somes, then we search for something like that. (Search)
+
+enum TableKind { Full, Insert, Search }
+
+impl TableKind {
+    fn struct_field_for(&self, cx: &ExtCtxt, sp: Span, field_name: &str, ty: &PgType) -> Option<ast::StructField> {
+        let is_id = field_name == "id";
+
+        let make_field = |wrap: |P<ast::Ty>| -> P<ast::Ty>, visibility| {
+            Spanned {
+                node: ast::StructField_ {
+                    kind: ast::NamedField(ast::Ident::new(intern(field_name)), visibility),
+                    id: ast::DUMMY_NODE_ID,
+                    ty: wrap(ty.to_rust_type(cx, sp)),
+                    attrs: Vec::new()
+                },
+                span: sp
+            }
+        };
+                         
+        match *self {
+            Full => Some(make_field(
+                |x| x,
+                if is_id { ast::Inherited } else { ast:: Public })),
+            Insert if !is_id => Some(make_field(|x| x, ast::Public)),
+            Search => Some(make_field(|x| cx.ty_option(x), ast::Public)),
+            _ => None
         }
     }
-
-   (ast::StructDef { fields: template_fields, ctor_id: None },
-    ast::StructDef { fields: full_fields, ctor_id: None })
 }
 
-fn struct_field_for(ecx: &mut ExtCtxt, sp: Span, field_name: &str, ty: &PgType) -> ast::StructField {
-    let visibility =
-        if field_name == "id" { ast::Inherited } else { ast::Public };
+// Returns a struct definition for the given kind of struct we are interested in
+fn struct_def_for(cx: &mut ExtCtxt, span: Span, schema: &HashMap<String, PgType>, kind: &TableKind) -> ast::StructDef {
+    assert!(schema.get(&"id".to_string()).map(|t| t == &PgInt).unwrap_or(false),
+            "Need an id field with type int");
 
-    let struct_field_ = ast::StructField_ {
-        kind: ast::NamedField(ast::Ident::new(intern(field_name)), visibility),
-        id: ast::DUMMY_NODE_ID,
-        ty: ty.to_rust_type(ecx, sp),
-        attrs: Vec::new()
-    };
+    let mut fields = Vec::new();
 
-    Spanned { node: struct_field_, span: sp }
+    for (name, ty) in schema.iter() {
+        kind.struct_field_for(cx, span, name.as_slice(), ty).map(|f| fields.push(f));
+    }
+
+    ast::StructDef { fields: fields, ctor_id: None }
 }
 
 // de-plural and capitialize name (ActiveRecord name convention).
