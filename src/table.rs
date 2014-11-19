@@ -46,9 +46,7 @@ fn expand_pg_table(cx: &mut ExtCtxt, sp: Span, args: &[TokenTree]) -> Box<MacRes
     let base_struct_name_string = base_name(table_name);
     let base_struct_name = base_struct_name_string.as_slice();
 
-    let full_def =
-        struct_item_for(cx, sp, schema, base_struct_name, &Full).map(
-            |mut f| { f.vis = ast::Inherited; f });
+    let full_def = struct_item_for(cx, sp, schema, base_struct_name, &Full);
     let insert_def = struct_item_for(cx, sp, schema, base_struct_name, &Insert);
     let search_def = struct_item_for(cx, sp, schema, base_struct_name, &Search);
     
@@ -226,7 +224,8 @@ fn struct_item_for(cx: &ExtCtxt, sp: Span, schema: &HashMap<String, PgType>, bas
     cx.item_struct(
         sp,
         kind.name_ident(base_name),
-        struct_def_for(cx, sp, schema, kind))
+        struct_def_for(cx, sp, schema, kind)).map(
+        |mut r| { r.vis = ast::Visibility::Public; r })
 }
 
 // Returns a struct definition for the given kind of struct we are interested in
