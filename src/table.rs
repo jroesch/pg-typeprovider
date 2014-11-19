@@ -202,7 +202,7 @@ fn insert_impl(cx: &ExtCtxt, sp: Span, table_name: &str, struct_name: &ast::Iden
                 sp, cx.expr_field_access(
                     sp, r_exp.clone(),
                     ast::Ident::new(intern(*k))))).collect());
-    let method = quote_method!(cx, fn insert(self, conn: Connection) {
+    let method = quote_method!(cx, fn insert(self, conn: &Connection) {
         let r = &self;
         conn.execute($query, $values);
     });

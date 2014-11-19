@@ -28,7 +28,7 @@ fn test_user_template() {
     let conn = Connection::connect("postgres://jroesch@localhost/gradr-production", &SslMode::None)
             .unwrap();
     
-    user.insert(conn);
+    user.insert(&conn);
 }
 
 // TODO: this test should not compile.  We don't want to allow
