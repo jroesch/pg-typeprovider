@@ -49,7 +49,9 @@ fn expand_pg_table(cx: &mut ExtCtxt, sp: Span, args: &[TokenTree]) -> Box<MacRes
     let (template_name, full_name) = structify(&table_name);
 
     let template_item = cx.item_struct(sp, template_name, template_def);
-    let full_item = cx.item_struct(sp, full_name, full_def);
+    let mut full_item = cx.item_struct(sp, full_name, full_def);
+    let full_item = full_item.map(|mut f| { f.vis = ast::Inherited; f } );
+
     MacItems::new(vec![template_item, full_item].into_iter())
 }
 
@@ -124,8 +126,11 @@ fn struct_defs_for(ecx: &mut ExtCtxt, span: Span, schema: HashMap<String, PgType
 }
 
 fn struct_field_for(ecx: &mut ExtCtxt, sp: Span, field_name: &str, ty: &PgType) -> ast::StructField {
+    let visibility =
+        if field_name == "id" { ast::Inherited } else { ast::Public };
+
     let struct_field_ = ast::StructField_ {
-        kind: ast::NamedField(ast::Ident::new(intern(field_name)), ast::Public),
+        kind: ast::NamedField(ast::Ident::new(intern(field_name)), visibility),
         id: ast::DUMMY_NODE_ID,
         ty: ty.to_rust_type(ecx, sp),
         attrs: Vec::new()
