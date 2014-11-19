@@ -2,11 +2,16 @@
 #[phase(plugin)]
 extern crate pg_typeprovider;
 extern crate time;
+extern crate postgres;
 
 use time::{now, Timespec};
 
+use postgres::{Connection, SslMode};
+
 pg_table!(users)
 
+// TODO: this currently will modify the database and leave it in an
+// unclean state.
 #[test]
 fn test_user_template() {
     let user = UserTemplate {
@@ -20,7 +25,10 @@ fn test_user_template() {
         password_digest: "faksdflasfjslf".to_string()
     };
 
-    assert_eq!("roeschinc@gmail.com", user.email.as_slice());
+    let conn = Connection::connect("postgres://jroesch@localhost/gradr-production", &SslMode::None)
+            .unwrap();
+    
+    user.insert(conn);
 }
 
 // TODO: this test should not compile.  We don't want to allow

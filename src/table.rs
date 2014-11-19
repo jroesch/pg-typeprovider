@@ -1,5 +1,5 @@
 #![crate_type="dylib"]
-#![feature(plugin_registrar, phase)]
+#![feature(plugin_registrar, phase, quote)]
 
 extern crate syntax;
 extern crate rustc;
@@ -44,15 +44,39 @@ fn expand_pg_table(cx: &mut ExtCtxt, sp: Span, args: &[TokenTree]) -> Box<MacRes
     //     debug!("FieldName: {}; Type: {}", name, ty)
     // }
 
-    let (template_def, full_def) = struct_defs_for(cx, sp, schema);
+    let (template_def, full_def) = struct_defs_for(cx, sp, &schema);
 
     let (template_name, full_name) = structify(&table_name);
 
     let template_item = cx.item_struct(sp, template_name, template_def);
-    let mut full_item = cx.item_struct(sp, full_name, full_def);
+    let full_item = cx.item_struct(sp, full_name, full_def);
     let full_item = full_item.map(|mut f| { f.vis = ast::Inherited; f } );
 
-    MacItems::new(vec![template_item, full_item].into_iter())
+    let (query, keys) = insert_line_and_keys(table_name.as_slice(), &schema);
+    
+    let r_exp = cx.expr_ident(sp, ast::Ident::new(intern("r")));
+    let values = cx.expr_vec_slice(sp, keys.iter().map(|k| cx.expr_addr_of(sp, cx.expr_field_access(sp, r_exp.clone(), ast::Ident::new(intern(*k))))).collect());
+
+    let method = quote_method!(cx, fn insert(self, conn: Connection) {
+        let r = &self;
+        conn.execute($query, $values);
+    });
+
+    let imp = cx.item(
+        sp, template_name.clone(), vec!(),
+        ast::Item_::ItemImpl(ast::Generics {
+            lifetimes: vec!(),
+            ty_params: syntax::owned_slice::OwnedSlice::empty(),
+            where_clause: ast::WhereClause {
+                id: ast::DUMMY_NODE_ID,
+                predicates: vec!()
+            }
+        },
+                             None,
+                             cx.ty_ident(sp, template_name.clone()),
+                             vec!(ast::ImplItem::MethodImplItem(method))));
+    
+    MacItems::new(vec![template_item, full_item, imp].into_iter())
 }
 
 #[deriving(Show, PartialEq)]
@@ -102,11 +126,48 @@ fn schema_for(conn: Connection, table_name: &String) -> HashMap<String, PgType> 
     schema
 }
 
+fn join(vec: &Vec<&str>, delim: &str) -> String {
+    let mut retval = "".to_string();
+    let mut cur = 0;
+    let len = vec.len();
+
+    for s in vec.iter() {
+        retval.push_str(*s);
+        if cur < len - 1 {
+            retval.push_str(delim);
+        }
+        cur += 1;
+    }
+
+    retval
+}
+        
+fn insert_line_and_keys<'a>(table_name: &'a str, schema: &'a HashMap<String, PgType>) -> (String, Vec<&'a str>) {
+    let mut keys: Vec<&str> = Vec::new();
+    let mut values: Vec<String> = Vec::new();
+    let mut i = 1i;
+
+    for (name, _) in schema.iter() {
+        let key = name.as_slice();
+        if name.as_slice() != "id" {
+            keys.push(key);
+            values.push(format!("${}", i));
+            i += 1;
+        }
+    }
+
+    let query = format!("INSERT INTO {} ({}) VALUES ({})",
+                        table_name,
+                        join(&keys, ", "),
+                        join(&values.iter().map(|s| s.as_slice()).collect(), ", "));
+    (query, keys)
+}
+    
 // Returns a pair of template, full struct
 // Templates are used strictly for making new records, and are missing the
 // all-important id field.  The full version corresponds to something in the
 // database
-fn struct_defs_for(ecx: &mut ExtCtxt, span: Span, schema: HashMap<String, PgType>) -> (ast::StructDef, ast::StructDef) {
+fn struct_defs_for(ecx: &mut ExtCtxt, span: Span, schema: &HashMap<String, PgType>) -> (ast::StructDef, ast::StructDef) {
     assert!(schema.get(&"id".to_string()).map(|t| t == &PgInt).unwrap_or(false),
             "Need an id field with type int");
     
