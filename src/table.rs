@@ -72,7 +72,7 @@ impl PgType {
         match s.as_slice() {
             "integer" => PgInt,
             "boolean" => PgBool,
-            "character varying" => PgString,
+            "character varying" | "text" => PgString,
             "timestamp without time zone" => PgTime,
             s => panic!("type {} not yet supported", s)
         }
