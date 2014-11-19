@@ -27,7 +27,7 @@ use self::TableKind::{Full, Insert, Search};
 fn expand_pg_table(cx: &mut ExtCtxt, sp: Span, args: &[TokenTree]) -> Box<MacResult + 'static> {
 
     // Get the table name.
-    let table_name = match args {
+    let table_name_string = match args {
         [TtToken(_, token::Ident(s, _))] => token::get_ident(s).to_string(),
         _ => {
             cx.span_err(sp, "argument should be a single identifier");
@@ -35,50 +35,28 @@ fn expand_pg_table(cx: &mut ExtCtxt, sp: Span, args: &[TokenTree]) -> Box<MacRes
         }
     };
 
+    let table_name = table_name_string.as_slice();
+
     // Open a connection to PG.
     let conn = Connection::connect("postgres://jroesch@localhost/gradr-production", &SslMode::None)
             .unwrap();
 
-    let schema: HashMap<String, PgType> = schema_for(conn, &table_name);
+    let schema: &HashMap<String, PgType> = &schema_for(conn, table_name);
 
-    // for (name, ty) in schema.iter() {
-    //     debug!("FieldName: {}; Type: {}", name, ty)
-    // }
+    let base_struct_name_string = base_name(table_name);
+    let base_struct_name = base_struct_name_string.as_slice();
 
-    let template_def = struct_def_for(cx, sp, &schema, &Insert);
-    let full_def = struct_def_for(cx, sp, &schema, &Full);
-
-    let (template_name, full_name) = structify(&table_name);
-
-    let template_item = cx.item_struct(sp, template_name, template_def);
-    let full_item = cx.item_struct(sp, full_name, full_def);
-    let full_item = full_item.map(|mut f| { f.vis = ast::Inherited; f } );
-
-    let (query, keys) = insert_line_and_keys(table_name.as_slice(), &schema);
+    let full_def =
+        struct_item_for(cx, sp, schema, base_struct_name, &Full).map(
+            |mut f| { f.vis = ast::Inherited; f });
+    let insert_def = struct_item_for(cx, sp, schema, base_struct_name, &Insert);
+    let search_def = struct_item_for(cx, sp, schema, base_struct_name, &Search);
     
-    let r_exp = cx.expr_ident(sp, ast::Ident::new(intern("r")));
-    let values = cx.expr_vec_slice(sp, keys.iter().map(|k| cx.expr_addr_of(sp, cx.expr_field_access(sp, r_exp.clone(), ast::Ident::new(intern(*k))))).collect());
+    let insert_impl_item = insert_impl(cx, sp, table_name,
+                                       &insert_def.ident, schema);
 
-    let method = quote_method!(cx, fn insert(self, conn: Connection) {
-        let r = &self;
-        conn.execute($query, $values);
-    });
-
-    let imp = cx.item(
-        sp, template_name.clone(), vec!(),
-        ast::Item_::ItemImpl(ast::Generics {
-            lifetimes: vec!(),
-            ty_params: syntax::owned_slice::OwnedSlice::empty(),
-            where_clause: ast::WhereClause {
-                id: ast::DUMMY_NODE_ID,
-                predicates: vec!()
-            }
-        },
-                             None,
-                             cx.ty_ident(sp, template_name.clone()),
-                             vec!(ast::ImplItem::MethodImplItem(method))));
-    
-    MacItems::new(vec![template_item, full_item, imp].into_iter())
+    MacItems::new(
+        vec![full_def, insert_def, search_def, insert_impl_item].into_iter())
 }
 
 #[deriving(Show, PartialEq)]
@@ -110,7 +88,7 @@ impl PgType {
     }
 }
 
-fn schema_for(conn: Connection, table_name: &String) -> HashMap<String, PgType> {
+fn schema_for(conn: Connection, table_name: &str) -> HashMap<String, PgType> {
     let query = format!("select column_name, \
                                 data_type, \
                                 character_maximum_length \
@@ -168,15 +146,27 @@ fn insert_line_and_keys<'a>(table_name: &'a str, schema: &'a HashMap<String, PgT
 // There are three kinds of struct definitions for a table T:
 // -T (Full): a record returned from the database.  This has an id field we should
 //  not be able to modify.
-// -TInsertTemplate: A record we want to go into the database.  This is missing
+// -TInsert: A record we want to go into the database.  This is missing
 //  the id field, which will be put in by the database. (Insert)
-// -TSearchTemplate: A way to search the database for a given kind of record.
+// -TSearch: A way to search the database for a given kind of record.
 //  This has all the fields as a T, except they are all Option.  If we have
 //  Somes, then we search for something like that. (Search)
 
 enum TableKind { Full, Insert, Search }
 
 impl TableKind {
+    fn name(&self, base_name: &str) -> String {
+        match *self {
+            Full => base_name.to_string(),
+            Insert => format!("{}Insert", base_name),
+            Search => format!("{}Search", base_name)
+        }
+    }
+
+    fn name_ident(&self, base_name: &str) -> ast::Ident {
+        ast::Ident::new(intern(self.name(base_name).as_slice()))
+    }
+
     fn struct_field_for(&self, cx: &ExtCtxt, sp: Span, field_name: &str, ty: &PgType) -> Option<ast::StructField> {
         let is_id = field_name == "id";
 
@@ -203,8 +193,44 @@ impl TableKind {
     }
 }
 
+fn insert_impl(cx: &ExtCtxt, sp: Span, table_name: &str, struct_name: &ast::Ident, schema: &HashMap<String, PgType>) -> P<ast::Item> {
+    let (query, keys) = insert_line_and_keys(table_name, schema);
+    let r_exp = cx.expr_ident(sp, ast::Ident::new(intern("r")));
+    let values = cx.expr_vec_slice(
+        sp, keys.iter().map(
+            |k| cx.expr_addr_of(
+                sp, cx.expr_field_access(
+                    sp, r_exp.clone(),
+                    ast::Ident::new(intern(*k))))).collect());
+    let method = quote_method!(cx, fn insert(self, conn: Connection) {
+        let r = &self;
+        conn.execute($query, $values);
+    });
+    
+    cx.item(
+        sp, struct_name.clone(), vec!(),
+        ast::Item_::ItemImpl(ast::Generics {
+            lifetimes: vec!(),
+            ty_params: syntax::owned_slice::OwnedSlice::empty(),
+            where_clause: ast::WhereClause {
+                id: ast::DUMMY_NODE_ID,
+                predicates: vec!()
+            }
+        },
+                             None,
+                             cx.ty_ident(sp, struct_name.clone()),
+                             vec!(ast::ImplItem::MethodImplItem(method))))
+}
+
+fn struct_item_for(cx: &ExtCtxt, sp: Span, schema: &HashMap<String, PgType>, base_name: &str, kind: &TableKind) -> P<ast::Item> {
+    cx.item_struct(
+        sp,
+        kind.name_ident(base_name),
+        struct_def_for(cx, sp, schema, kind))
+}
+
 // Returns a struct definition for the given kind of struct we are interested in
-fn struct_def_for(cx: &mut ExtCtxt, span: Span, schema: &HashMap<String, PgType>, kind: &TableKind) -> ast::StructDef {
+fn struct_def_for(cx: &ExtCtxt, span: Span, schema: &HashMap<String, PgType>, kind: &TableKind) -> ast::StructDef {
     assert!(schema.get(&"id".to_string()).map(|t| t == &PgInt).unwrap_or(false),
             "Need an id field with type int");
 
@@ -218,9 +244,8 @@ fn struct_def_for(cx: &mut ExtCtxt, span: Span, schema: &HashMap<String, PgType>
 }
 
 // de-plural and capitialize name (ActiveRecord name convention).
-// Returns the template name and the full name
-fn structify(name: &String) -> (ast::Ident, ast::Ident) {
-    let base_name: String = name.as_slice().chars().enumerate().filter_map(|(i, c)| {
+fn base_name(name: &str) -> String {
+    let retval: String = name.chars().enumerate().filter_map(|(i, c)| {
         if i == 0 {
             Some(c.to_uppercase())
         } else if i == name.len() - 1 {
@@ -229,11 +254,7 @@ fn structify(name: &String) -> (ast::Ident, ast::Ident) {
             Some(c.clone())
         }
     }).collect();
-
-    let mut template_name = base_name.clone();
-    template_name.push_str("Template");
-    (ast::Ident::new(intern(template_name.as_slice())),
-     ast::Ident::new(intern(base_name.as_slice())))
+    retval
 }
 
 #[plugin_registrar]

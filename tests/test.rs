@@ -14,7 +14,7 @@ pg_table!(users)
 // unclean state.
 #[test]
 fn test_user_template() {
-    let user = UserTemplate {
+    let user = UserInsert {
         email: "roeschinc@gmail.com".to_string(),
         first_name: "Jared".to_string(),
         last_name: "Roesch".to_string(),
