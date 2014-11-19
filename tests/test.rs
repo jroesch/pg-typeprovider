@@ -8,9 +8,8 @@ use time::{now, Timespec};
 pg_table!(users)
 
 #[test]
-fn test_user_schema() {
-    let user = User {
-        id: 0,
+fn test_user_template() {
+    let user = UserTemplate {
         email: "roeschinc@gmail.com".to_string(),
         first_name: "Jared".to_string(),
         last_name: "Roesch".to_string(),
@@ -21,5 +20,5 @@ fn test_user_schema() {
         password_digest: "faksdflasfjslf".to_string()
     };
 
-    assert_eq!(0, user.id)
+    assert_eq!("roeschinc@gmail.com", user.email.as_slice());
 }

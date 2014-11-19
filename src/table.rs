@@ -23,8 +23,7 @@ use postgres::{Connection, SslMode};
 
 use self::PgType::{PgInt, PgBool, PgString, PgTime};
 
-fn expand_pg_table(cx: &mut ExtCtxt, sp: Span, args: &[TokenTree])
-        -> Box<MacResult + 'static> {
+fn expand_pg_table(cx: &mut ExtCtxt, sp: Span, args: &[TokenTree]) -> Box<MacResult + 'static> {
 
     // Get the table name.
     let table_name = match args {
@@ -45,12 +44,13 @@ fn expand_pg_table(cx: &mut ExtCtxt, sp: Span, args: &[TokenTree])
     //     debug!("FieldName: {}; Type: {}", name, ty)
     // }
 
-    let struct_def = struct_def_for(cx, sp, schema);
+    let (template_def, full_def) = struct_defs_for(cx, sp, schema);
 
-    let struct_name = structify(&table_name);
+    let (template_name, full_name) = structify(&table_name);
 
-    let struct_item = cx.item_struct(sp, struct_name, struct_def);
-    MacItems::new(vec![struct_item].into_iter())
+    let template_item = cx.item_struct(sp, template_name, template_def);
+    let full_item = cx.item_struct(sp, full_name, full_def);
+    MacItems::new(vec![template_item, full_item].into_iter())
 }
 
 #[deriving(Show, PartialEq)]
@@ -100,19 +100,32 @@ fn schema_for(conn: Connection, table_name: &String) -> HashMap<String, PgType> 
     schema
 }
 
-fn struct_def_for(ecx: &mut ExtCtxt, span: Span, schema: HashMap<String, PgType>) -> ast::StructDef {
-    let mut fields = Vec::new();
+// Returns a pair of template, full struct
+// Templates are used strictly for making new records, and are missing the
+// all-important id field.  The full version corresponds to something in the
+// database
+fn struct_defs_for(ecx: &mut ExtCtxt, span: Span, schema: HashMap<String, PgType>) -> (ast::StructDef, ast::StructDef) {
+    assert!(schema.get(&"id".to_string()).map(|t| t == &PgInt).unwrap_or(false),
+            "Need an id field with type int");
+    
+    let mut template_fields = Vec::new();
+    let mut full_fields = Vec::new();
 
-    for (name, ty) in schema.into_iter() {
-        fields.push(struct_field_for(ecx, span, name, ty))
+    for (name, ty) in schema.iter() {
+        let field = struct_field_for(ecx, span, name.as_slice(), ty);
+        full_fields.push(field.clone());
+        if name.as_slice() != "id" {
+            template_fields.push(field);
+        }
     }
 
-    ast::StructDef { fields: fields, ctor_id: None }
+   (ast::StructDef { fields: template_fields, ctor_id: None },
+    ast::StructDef { fields: full_fields, ctor_id: None })
 }
 
-fn struct_field_for(ecx: &mut ExtCtxt, sp: Span, field_name: String, ty: PgType) -> ast::StructField {
+fn struct_field_for(ecx: &mut ExtCtxt, sp: Span, field_name: &str, ty: &PgType) -> ast::StructField {
     let struct_field_ = ast::StructField_ {
-        kind: ast::NamedField(ast::Ident::new(intern(field_name.as_slice())), ast::Public),
+        kind: ast::NamedField(ast::Ident::new(intern(field_name)), ast::Public),
         id: ast::DUMMY_NODE_ID,
         ty: ty.to_rust_type(ecx, sp),
         attrs: Vec::new()
@@ -121,9 +134,10 @@ fn struct_field_for(ecx: &mut ExtCtxt, sp: Span, field_name: String, ty: PgType)
     Spanned { node: struct_field_, span: sp }
 }
 
-// de-plural and capitialize name (ActiveRecord name convention)
-fn structify(name: &String) -> ast::Ident {
-    let name: String = name.as_slice().chars().enumerate().filter_map(|(i, c)| {
+// de-plural and capitialize name (ActiveRecord name convention).
+// Returns the template name and the full name
+fn structify(name: &String) -> (ast::Ident, ast::Ident) {
+    let base_name: String = name.as_slice().chars().enumerate().filter_map(|(i, c)| {
         if i == 0 {
             Some(c.to_uppercase())
         } else if i == name.len() - 1 {
@@ -133,7 +147,10 @@ fn structify(name: &String) -> ast::Ident {
         }
     }).collect();
 
-    ast::Ident::new(intern(name.as_slice()))
+    let mut template_name = base_name.clone();
+    template_name.push_str("Template");
+    (ast::Ident::new(intern(template_name.as_slice())),
+     ast::Ident::new(intern(base_name.as_slice())))
 }
 
 #[plugin_registrar]
