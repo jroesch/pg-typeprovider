@@ -80,7 +80,7 @@ impl PgType {
 
     pub fn to_rust_type(&self, cx: &ExtCtxt, sp: Span) -> P<ast::Ty> {
         match self {
-            &PgInt => cx.ty_ident(sp, ast::Ident::new(intern("int"))),
+            &PgInt => cx.ty_ident(sp, ast::Ident::new(intern("i32"))),
             &PgBool => cx.ty_ident(sp, ast::Ident::new(intern("bool"))),
             &PgString => cx.ty_ident(sp, ast::Ident::new(intern("String"))),
             &PgTime => cx.ty_ident(sp, ast::Ident::new(intern("Timespec")))
