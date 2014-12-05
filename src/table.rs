@@ -208,6 +208,45 @@ impl TableDefinition {
             vec!(),
             &new_parse_sess()).unwrap()
     }
+
+    fn insert_implementation_body(&self) -> String {
+        let keys: Vec<&String> =
+            self.schema.keys().filter(|k| k.as_slice() != "id").collect();
+        let query_base =
+            format!("\"INSERT INTO {} ({}) VALUES ({})\"",
+                    self.table_name.as_slice(),
+                    keys.iter().join(", "),
+                    range(1, keys.len() + 1).map(|i| {
+                        format!("${}", i)
+                    }).join(", "));
+        let values = keys.iter().map(|k| {
+            format!("&self.{}", k)
+        }).join(", ");
+
+        format!(
+            "pub fn insert(self, conn: &Connection) {{\
+                println!({});\
+                conn.execute({}, &[{}]);\
+            }}",
+            query_base.as_slice(),
+            query_base,
+            values)
+    }
+            
+    fn struct_implementation_for(&self, kind: &TableKind) -> P<Item> {
+        let imp = 
+            format!("impl {} {{ {} }}", 
+                    self.name_for_kind(kind),
+                    match kind {
+                        &Insert => self.insert_implementation_body(),
+                        _ => panic!("Not yet implemented")
+                    });
+        parse_item_from_source_str(
+            "implgen".to_string(),
+            imp,
+            vec!(),
+            &new_parse_sess()).unwrap()
+    }
 } // TableDefinition
 
 fn expand_pg_table(cx: &mut ExtCtxt, sp: Span, args: &[TokenTree]) -> Box<MacResult + 'static> {
@@ -227,7 +266,8 @@ fn expand_pg_table(cx: &mut ExtCtxt, sp: Span, args: &[TokenTree]) -> Box<MacRes
     MacItems::new(
         vec!(table_def.struct_definition_for(&Full),
              table_def.struct_definition_for(&Insert),
-             table_def.struct_definition_for(&Search)).into_iter())
+             table_def.struct_definition_for(&Search),
+             table_def.struct_implementation_for(&Insert)).into_iter())
 }
 
 #[plugin_registrar]

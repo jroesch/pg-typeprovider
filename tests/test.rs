@@ -25,10 +25,10 @@ fn test_user_template() {
         password_digest: "faksdflasfjslf".to_string()
     };
 
-    // let conn = Connection::connect("postgres://jroesch@localhost/gradr-production", &SslMode::None)
-    //         .unwrap();
+    let conn = Connection::connect("postgres://jroesch@localhost/gradr-production", &SslMode::None)
+            .unwrap();
     
-    // user.insert(&conn);
+    user.insert(&conn);
 }
 
 // TODO: this test should not compile.  We don't want to allow
