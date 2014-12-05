@@ -93,7 +93,7 @@ fn schema_for(conn: Connection, table_name: &String) -> HashMap<String, PgType> 
 
     let mut schema = HashMap::new();
 
-    for row in rows.query([]).unwrap() {
+    for row in rows.query(&[]).unwrap() {
         schema.insert(row.get(0), PgType::from_data_type(&row.get(1)));
     }
 
