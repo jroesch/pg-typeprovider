@@ -204,7 +204,7 @@ impl<'a> TableDefinition<'a> {
 
         format!(
             "pub fn insert(self, conn: &Connection) {{\
-                conn.execute({}, &[{}]);\
+                conn.execute({}, &[{}]).unwrap();\
             }}",
             query_base,
             values)
@@ -226,7 +226,7 @@ impl<'a> TableDefinition<'a> {
 
         format!(
             // TODO: should return an iterator, but this is getting complex
-            "pub fn search<'a, 'b>(&'a self, conn: &'b Connection, limit: Option<uint>) -> Vec<{0}> {{\
+            "pub fn search(&self, conn: &Connection, limit: Option<uint>) -> Vec<{0}> {{\
                 let mut constraints: Vec<(&str, &ToSql)> = vec!();
                 {1}\
                 let mut query = {2}.to_string();\
@@ -240,7 +240,7 @@ impl<'a> TableDefinition<'a> {
                                 k, i)).join(\" AND \").as_slice());\
                 }}\
                 limit.map(|l| query.push_str(format!(\" LIMIT {{}}\", l).as_slice()));\
-                let rows: Statement<'b> = conn.prepare(query.as_slice()).unwrap();\
+                let rows = conn.prepare(query.as_slice()).unwrap();\
                 let values_vec: Vec<&ToSql> = \
                     constraints.iter().map(|&(_, v)| v).collect();\
                 rows.query(values_vec.as_slice()).unwrap().map(|row| {{\
