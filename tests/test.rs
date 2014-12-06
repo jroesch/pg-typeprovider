@@ -1,21 +1,18 @@
 #![feature(phase)]
 #[phase(plugin)]
 extern crate pg_typeprovider;
-extern crate time;
-extern crate postgres;
 
-use time::{now, Timespec};
-
-use postgres::{Connection, SslMode, ToSql, Row};
-
-
+// TODO: this is very weird; I need to put this in a module, and pg_typeprovider
+// must be put in twice.  This might be a bug in Rust; ask Jared.
 mod testing {
     extern crate core;
+    extern crate time;
+    extern crate postgres;
     extern crate pg_typeprovider;
 
-    use time::{now, Timespec};
+    use self::time::{now, Timespec};
 
-    use postgres::{Connection, SslMode, ToSql, Row, Rows, Statement};
+    use self::postgres::{Connection, SslMode, ToSql, Row, Rows, Statement};
 
     use self::core::iter::Map;
     use self::pg_typeprovider::util::Joinable;
