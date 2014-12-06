@@ -1,22 +1,21 @@
-#![crate_type="dylib"]
-#![feature(plugin_registrar, phase)]
-
 extern crate syntax;
 extern crate rustc;
 extern crate postgres;
 
-use syntax::ast::{Item, TokenTree};
-use syntax::ast::TokenTree::TtToken;
-use syntax::ptr::P;
-use syntax::parse::{new_parse_sess, parse_item_from_source_str};
-use syntax::parse::token::get_ident;
-use syntax::parse::token::Token::Ident;
-use syntax::ext::base::{ExtCtxt, MacResult, DummyResult, MacItems};
-use syntax::codemap::Span;
-use std::collections::HashMap;
-use rustc::plugin::Registry;
+use self::syntax::ast::{Item, TokenTree, CrateConfig};
+use self::syntax::ast::TokenTree::TtToken;
+use self::syntax::ptr::P;
+use self::syntax::parse::{parse_item_from_source_str, ParseSess};
+use self::syntax::parse::token::get_ident;
+use self::syntax::parse::token::Token::Ident;
+use self::syntax::ext::base::{ExtCtxt, MacResult, DummyResult, MacItems};
+use self::syntax::codemap::Span;
+use self::rustc::plugin::Registry;
+use self::postgres::{Connection, SslMode};
 
-use postgres::{Connection, SslMode};
+use std::collections::HashMap;
+
+use util::Joinable;
 
 use self::PgType::{PgInt, PgBool, PgString, PgTime};
 use self::TableKind::{Full, Insert, Search};
@@ -66,14 +65,16 @@ enum TableKind {
     Search
 }
 
-struct TableDefinition {
+struct TableDefinition<'a> {
     table_name: String,
     full_name: String,
     insert_name: String,
     search_name: String,
-    schema: HashMap<String, PgType>
+    schema: HashMap<String, PgType>,
+    cfg: &'a CrateConfig,
+    session: &'a ParseSess
 }
-
+    
 // de-plural and capitialize name (ActiveRecord name convention).
 fn pretty_name(name: &str) -> String {
     let retval: String = name.chars().enumerate().filter_map(|(i, c)| {
@@ -106,35 +107,8 @@ fn schema_for(conn: Connection, table_name: &str) -> HashMap<String, PgType> {
     schema
 }
 
-trait Joinable {
-    fn join(&mut self, delim: &str) -> String;
-}
-
-impl<'a, A : Str, T : Iterator<A> + 'a> Joinable for T  {
-    fn join(&mut self, delim: &str) -> String {
-        let mut retval = "".to_string();
-        let mut prev = self.next();
-
-        if prev.is_none() {
-            return retval;
-        }
-
-        let mut cur = self.next();
-
-        while cur.is_some() {
-            retval.push_str(prev.unwrap().as_slice());
-            retval.push_str(delim);
-            prev = cur;
-            cur = self.next();
-        }
-                
-        retval.push_str(prev.unwrap().as_slice());
-        retval
-    } // join
-}
-
-impl TableDefinition {
-    fn new(connect_str: &str, actual_name: &str) -> TableDefinition {
+impl<'a> TableDefinition<'a> {
+    fn new<'a>(connect_str: &'a str, actual_name: &'a str, cfg: &'a CrateConfig, sess: &'a ParseSess) -> TableDefinition<'a> {
         let conn = Connection::connect(connect_str, &SslMode::None).unwrap();
         let schema = schema_for(conn, actual_name);
         assert!(schema.contains_key(&"id".to_string()));
@@ -146,7 +120,9 @@ impl TableDefinition {
             insert_name: format!("{}Insert", pretty.as_slice()),
             search_name: format!("{}Search", pretty.as_slice()),
             full_name: pretty,
-            schema: schema
+            schema: schema,
+            cfg: cfg,
+            session: sess
         }
     }
 
@@ -205,13 +181,16 @@ impl TableDefinition {
             format!("pub struct {} {{ {} }}",
                     self.name_for_kind(kind),
                     self.struct_body(kind).as_slice()),
-            vec!(),
-            &new_parse_sess()).unwrap()
+            self.cfg.clone(),
+            self.session).unwrap()
+    }
+
+    fn schema_keys_filter(&self, f: |&str| -> bool) -> Vec<&String> {
+        self.schema.keys().filter(|k| f(k.as_slice())).collect()
     }
 
     fn insert_implementation_body(&self) -> String {
-        let keys: Vec<&String> =
-            self.schema.keys().filter(|k| k.as_slice() != "id").collect();
+        let keys = self.schema_keys_filter(|k| k != "id");
         let query_base =
             format!("\"INSERT INTO {} ({}) VALUES ({})\"",
                     self.table_name.as_slice(),
@@ -225,27 +204,72 @@ impl TableDefinition {
 
         format!(
             "pub fn insert(self, conn: &Connection) {{\
-                println!({});\
                 conn.execute({}, &[{}]);\
             }}",
-            query_base.as_slice(),
             query_base,
             values)
     }
-            
+
+    fn search_implementation_body(&self) -> String {
+        let keys = self.schema_keys_filter(|_| true);
+        let base_query =
+            format!("\"SELECT {} FROM {}\"",
+                    keys.iter().join(", "),
+                    self.table_name.as_slice());
+
+        fn check_key(key: &str) -> String {
+            format!(
+                "if self.{0}.is_some() {{\
+                    constraints.push((\"{0}\", &self.{0}));\
+                }}", key)
+        }
+
+        format!(
+            // TODO: should return an iterator, but this is getting complex
+            "pub fn search<'a, 'b>(&'a self, conn: &'b Connection, limit: Option<uint>) -> Vec<{0}> {{\
+                let mut constraints: Vec<(&str, &ToSql)> = vec!();
+                {1}\
+                let mut query = {2}.to_string();\
+                let len = constraints.len();\
+                if len > 0 {{\
+                    query.push_str(\" WHERE \");\
+                    query.push_str(
+                        constraints.iter().zip(range(1, len + 1)).map(\
+                            |(&(k, _), i)| format!(\
+                                \"{{}} = ${{}}\",\
+                                k, i)).join(\" AND \").as_slice());\
+                }}\
+                limit.map(|l| query.push_str(format!(\" LIMIT {{}}\", l).as_slice()));\
+                let rows: Statement<'b> = conn.prepare(query.as_slice()).unwrap();\
+                let values_vec: Vec<&ToSql> = \
+                    constraints.iter().map(|&(_, v)| v).collect();\
+                rows.query(values_vec.as_slice()).unwrap().map(|row| {{\
+                    {0} {{ {3} }}\
+                }}).collect()
+            }}",
+            self.full_name.as_slice(),
+            keys.iter().map(|k| check_key(k.as_slice())).join("\n"),
+            base_query,
+            keys.iter().zip(range(0, keys.len())).map(|(k, i)| {
+                format!("{}: row.get({})", k.as_slice(), i)
+            }).join(", "))
+    }
+
     fn struct_implementation_for(&self, kind: &TableKind) -> P<Item> {
         let imp = 
             format!("impl {} {{ {} }}", 
                     self.name_for_kind(kind),
                     match kind {
                         &Insert => self.insert_implementation_body(),
+                        &Search => self.search_implementation_body(),
                         _ => panic!("Not yet implemented")
                     });
+
         parse_item_from_source_str(
             "implgen".to_string(),
             imp,
-            vec!(),
-            &new_parse_sess()).unwrap()
+            self.cfg.clone(),
+            self.session).unwrap()
     }
 } // TableDefinition
 
@@ -261,13 +285,16 @@ fn expand_pg_table(cx: &mut ExtCtxt, sp: Span, args: &[TokenTree]) -> Box<MacRes
 
     let table_def = TableDefinition::new(
         "postgres://jroesch@localhost/gradr-production",
-        table_name_string.as_slice());
+        table_name_string.as_slice(),
+        &cx.cfg,
+        cx.parse_sess);
     
     MacItems::new(
         vec!(table_def.struct_definition_for(&Full),
              table_def.struct_definition_for(&Insert),
              table_def.struct_definition_for(&Search),
-             table_def.struct_implementation_for(&Insert)).into_iter())
+             table_def.struct_implementation_for(&Insert),
+             table_def.struct_implementation_for(&Search)).into_iter())
 }
 
 #[plugin_registrar]

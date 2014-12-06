@@ -4,13 +4,14 @@ name = "pg_typeprovider"
 version = "0.0.1"
 authors = ["Jared Roesch <roeschinc@gmail.com>"]
 
+[lib]
+
+name = "pg_typeprovider"
+path = "src/lib.rs"
+crate-type = ["dylib"]
+
 [dependencies.postgres]
 git = "https://github.com/sfackler/rust-postgres.git"
 
 [dependencies.time]
 time = "0.1.0"
-
-[lib]
-name = "pg_typeprovider"
-path = "src/table.rs"
-crate-type = ["dylib"]
