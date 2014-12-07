@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use util::Joinable;
 
 use self::PgType::{PgInt, PgBool, PgString, PgTime};
-use self::TableKind::{Full, Insert, Search};
+use self::TableKind::{Full, Insert, Search, Update};
 
 #[deriving(Show, PartialEq)]
 enum PgType {
@@ -62,7 +62,8 @@ impl PgType {
 enum TableKind {
     Full,
     Insert,
-    Search
+    Search,
+    Update
 }
 
 struct TableDefinition<'a> {
@@ -70,6 +71,7 @@ struct TableDefinition<'a> {
     full_name: String,
     insert_name: String,
     search_name: String,
+    update_name: String,
     schema: HashMap<String, PgType>,
     cfg: &'a CrateConfig,
     session: &'a ParseSess
@@ -119,6 +121,7 @@ impl<'a> TableDefinition<'a> {
             table_name: actual_name.to_string(),
             insert_name: format!("{}Insert", pretty.as_slice()),
             search_name: format!("{}Search", pretty.as_slice()),
+            update_name: format!("{}Update", pretty.as_slice()),
             full_name: pretty,
             schema: schema,
             cfg: cfg,
@@ -130,38 +133,37 @@ impl<'a> TableDefinition<'a> {
         match kind {
             &Full => self.full_name.as_slice(),
             &Insert => self.insert_name.as_slice(),
-            &Search => self.search_name.as_slice()
+            &Search => self.search_name.as_slice(),
+            &Update => self.update_name.as_slice(),
         }
     }
 
-    fn field_type(&self, field_name: &str, kind: &TableKind) -> String {
+    // Given a field name in a table and the kind of table it is for, returns
+    // triples for:
+    // -If the field is public in the struct
+    // -The name of the field in the struct
+    // -The type of the struct field, as a String
+    fn field_projection(&self, field_name: &str, kind: &TableKind) -> Vec<(bool, String, String)> {
         assert!(self.schema.contains_key(field_name));
+        
+        let name = field_name.to_string();
+        let typ = self.schema.get(field_name).unwrap().to_rust_type();
+        let op_typ = format!("Option<{}>", typ.as_slice());
 
-        let base_typ = self.schema.get(field_name).unwrap().to_rust_type();
-        if kind == &Search { 
-            format!("Option<{}>", base_typ)
-        } else {
-            base_typ
-        }
-    }
-
-    fn should_have_field(&self, field_name: &str, kind: &TableKind) -> bool {
-        kind != &Insert || field_name != "id"
-    }
-
-    fn field_public(&self, field_name: &str) -> bool {
-       field_name != "id"
-    }
-
-    // returns whether or not the field should be in the record, and if
-    // so, if the field is public (true) and what the type of the field
-    // should be (as a string)
-    fn field_projection(&self, field_name: &str, kind: &TableKind) -> Option<(bool, String)> {
-        if self.should_have_field(field_name, kind) {
-            Some((self.field_public(field_name),
-                  self.field_type(field_name, kind)))
-        } else {
-            None
+        match kind {
+            &Full =>
+                vec!((field_name != "id", name, typ)),
+            &Insert => 
+                if field_name != "id" {
+                    vec!((true, name, typ))
+                } else {
+                    vec!()
+                },
+            &Search =>
+                vec!((true, name, op_typ)),
+            &Update =>
+                vec!((true, format!("{}_to", name.as_slice()), op_typ.clone()),
+                     (true, format!("where_{}", name), op_typ))
         }
     }
 
@@ -169,13 +171,14 @@ impl<'a> TableDefinition<'a> {
         let mut fields: Vec<String> = vec!();
 
         for key in self.schema.keys() {
-            self.field_projection(key.as_slice(), kind).map(|(is_pub, typ)| {
+            let add_fields = self.field_projection(key.as_slice(), kind);
+            for (is_pub, name, typ) in add_fields.into_iter() {
                 fields.push(
-                    format!("{} {}: {}", 
+                    format!("{} {}: {}",
                             if is_pub { "pub" } else { "" },
-                            key.as_slice(),
+                            name,
                             typ));
-            });
+            }
         }
 
         fields.iter().join(", ")
