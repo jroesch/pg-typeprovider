@@ -134,30 +134,36 @@ impl<'a> TableDefinition<'a> {
         }
     }
 
+    fn field_type(&self, field_name: &str, kind: &TableKind) -> String {
+        assert!(self.schema.contains_key(field_name));
+
+        let base_typ = self.schema.get(field_name).unwrap().to_rust_type();
+        if kind == &Search { 
+            format!("Option<{}>", base_typ)
+        } else {
+            base_typ
+        }
+    }
+
+    fn should_have_field(&self, field_name: &str, kind: &TableKind) -> bool {
+        kind != &Insert || field_name != "id"
+    }
+
+    fn field_public(&self, field_name: &str) -> bool {
+       field_name != "id"
+    }
+
     // returns whether or not the field should be in the record, and if
     // so, if the field is public (true) and what the type of the field
     // should be (as a string)
     fn field_projection(&self, field_name: &str, kind: &TableKind) -> Option<(bool, String)> {
-        assert!(self.schema.contains_key(field_name));
-
-        let is_pub = 
-            match kind {
-                &Full => Some(field_name != "id"),
-                &Insert => 
-                    if field_name != "id" { Some(true) } else { None },
-                &Search => Some(true)
-            };
-        is_pub.map(|p| {
-            let base_typ = self.schema.get(field_name).unwrap().to_rust_type();
-            let typ_str =
-                if kind == &Search { 
-                    format!("Option<{}>", base_typ)
-                } else {
-                    base_typ
-                };
-            (p, typ_str)
-        })
-    } // field_projection
+        if self.should_have_field(field_name, kind) {
+            Some((self.field_public(field_name),
+                  self.field_type(field_name, kind)))
+        } else {
+            None
+        }
+    }
 
     fn struct_body(&self, kind: &TableKind) -> String {
         let mut fields: Vec<String> = vec!();
