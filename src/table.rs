@@ -264,21 +264,39 @@ impl<'a> TableDefinition<'a> {
             }).join(", "))
     }
 
-    fn struct_implementation_for(&self, kind: &TableKind) -> P<Item> {
-        let imp = 
-            format!("impl {} {{ {} }}", 
-                    self.name_for_kind(kind),
-                    match kind {
-                        &Insert => self.insert_implementation_body(),
-                        &Search => self.search_implementation_body(),
-                        _ => panic!("Not yet implemented")
-                    });
+    fn all_items(&self) -> Vec<P<Item>> {
+        let mut retval = vec!();
+        for kind in vec!(Full, Insert, Search, Update).iter() {
+            retval.push_all(self.items_for(kind).as_slice());
+        }
+        retval
+    }
 
-        parse_item_from_source_str(
-            "implgen".to_string(),
-            imp,
-            self.cfg.clone(),
-            self.session).unwrap()
+    fn items_for(&self, kind: &TableKind) -> Vec<P<Item>> {
+        let mut retval = vec!();
+        retval.push(self.struct_definition_for(kind));
+        self.struct_implementation_for(kind).map(|i| retval.push(i));
+        retval
+    }
+
+    fn implementation_body(&self, kind: &TableKind) -> Option<String> {
+        match kind {
+            &Full => None,
+            &Insert => Some(self.insert_implementation_body()),
+            &Search => Some(self.search_implementation_body()),
+            &Update => None // TODO: implement this
+        }
+    }
+
+    fn struct_implementation_for(&self, kind: &TableKind) -> Option<P<Item>> {
+        self.implementation_body(kind).map(|body| {
+            let name = self.name_for_kind(kind);
+            parse_item_from_source_str(
+                format!("implgen{}", name.as_slice()),
+                format!("impl {} {{ {} }}", name, body),
+                self.cfg.clone(),
+                self.session).unwrap()
+        })
     }
 } // TableDefinition
 
@@ -298,12 +316,7 @@ fn expand_pg_table(cx: &mut ExtCtxt, sp: Span, args: &[TokenTree]) -> Box<MacRes
         &cx.cfg,
         cx.parse_sess);
     
-    MacItems::new(
-        vec!(table_def.struct_definition_for(&Full),
-             table_def.struct_definition_for(&Insert),
-             table_def.struct_definition_for(&Search),
-             table_def.struct_implementation_for(&Insert),
-             table_def.struct_implementation_for(&Search)).into_iter())
+    MacItems::new(table_def.all_items().into_iter())
 }
 
 #[plugin_registrar]
