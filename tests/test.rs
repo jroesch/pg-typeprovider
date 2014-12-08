@@ -37,6 +37,20 @@ mod testing {
             Some("kyle".to_string()));
     }
 
+    #[test]
+    fn test_update_template_builder_where_first_name() {
+        assert_eq!(
+            UserUpdate::new().where_first_name("billy".to_string()).where_first_name,
+            Some("billy".to_string()));
+    }
+
+    #[test]
+    fn test_update_template_builder_set_last_name() {
+        assert_eq!(
+            UserUpdate::new().last_name_to("bob".to_string()).last_name_to,
+            Some("bob".to_string()));
+    }
+
     // TODO: this currently will modify the database and leave it in an
     // unclean state.
     #[test]
