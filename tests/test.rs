@@ -20,6 +20,11 @@ mod testing {
 
     pg_table!(users)
 
+    fn make_conn() -> Connection {
+        Connection::connect(
+            "postgres://jroesch@localhost/gradr-test", &SslMode::None).unwrap()
+    }
+
     // TODO: this currently will modify the database and leave it in an
     // unclean state.
     #[test]
@@ -35,9 +40,7 @@ mod testing {
             password_digest: "faksdflasfjslf".to_string()
         };
 
-        let conn = Connection::connect("postgres://jroesch@localhost/gradr-production", &SslMode::None)
-            .unwrap();
-        
+        let conn = make_conn();
         user.insert(&conn);
     }
 
@@ -54,8 +57,7 @@ mod testing {
             password_digest: "faksdflasfjslf".to_string()
         };
 
-        let conn = Connection::connect("postgres://jroesch@localhost/gradr-production", &SslMode::None)
-            .unwrap();
+        let conn = make_conn();
         user.insert(&conn);
         let matching = UserSearch {
             id: None,
@@ -85,8 +87,7 @@ mod testing {
             password_digest: "faksdflasfjslf".to_string()
         };
 
-        let conn = Connection::connect("postgres://jroesch@localhost/gradr-production", &SslMode::None)
-            .unwrap();
+        let conn = make_conn();
         user.insert(&conn);
 
         let matching = UserSearch {
