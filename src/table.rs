@@ -161,9 +161,15 @@ impl<'a> TableDefinition<'a> {
                 },
             &Search =>
                 vec!((true, name, op_typ)),
-            &Update =>
-                vec!((true, format!("{}_to", name.as_slice()), op_typ.clone()),
-                     (true, format!("where_{}", name), op_typ))
+            &Update => {
+                let mut retval =
+                    vec!((true, format!("where_{}", name), op_typ.clone()));
+                if field_name != "id" {
+                    retval.push(
+                        (true, format!("{}_to", name.as_slice()), op_typ));
+                }
+                retval
+            }
         }
     }
 
@@ -194,6 +200,10 @@ impl<'a> TableDefinition<'a> {
             self.session).unwrap()
     }
 
+    fn all_schema_keys(&self) -> Vec<&String> {
+        self.schema_keys_filter(|_| true)
+    }
+
     fn schema_keys_filter(&self, f: |&str| -> bool) -> Vec<&String> {
         self.schema.keys().filter(|k| f(k.as_slice())).collect()
     }
@@ -219,50 +229,131 @@ impl<'a> TableDefinition<'a> {
             values)
     }
 
+    // constraints: The name of a constructed Vec<(&str, &ToSql)>
+    fn build_multi_constraint_push(keys: &Vec<&String>,
+                                   constraints: &str,
+                                   as_struct_key: |&str| -> String) -> String {
+        keys.iter().map(|k| {
+            TableDefinition::build_constraint_push(
+                constraints,
+                as_struct_key(k.as_slice()).as_slice(),
+                k.as_slice())
+        }).join("\n")
+    }
+
+    // constraints: The name of a constructed Vec<(&str, &ToSql)>
+    fn build_constraint_push(constraints: &str,
+                             struct_key: &str,
+                             table_key: &str) -> String {
+        format!(
+            "if self.{0}.is_some() {{\
+                {1}.push((\"{2}\", self.{0}.as_ref().unwrap()));\
+            }}",
+            struct_key,
+            constraints,
+            table_key)
+    }
+
+    // constraints: The name of a constructed Vec<(&str, &ToSql)>
+    fn build_clause(constraints: &str,
+                    range_start: &str,
+                    range_end: &str,
+                    join_on: &str) -> String {
+        format!(
+            "{0}.iter().zip(range({1}, {2})).map(\
+                |(&(k, _), i)| format!(\
+                    \"{{}} = ${{}}\",\
+                    k, i)).join(\"{3}\")",
+            constraints,
+            range_start,
+            range_end,
+            join_on)
+    }
+
     fn search_implementation_body(&self) -> String {
-        let keys = self.schema_keys_filter(|_| true);
+        let keys = self.all_schema_keys();
         let base_query =
             format!("\"SELECT {} FROM {}\"",
                     keys.iter().join(", "),
                     self.table_name.as_slice());
-
-        fn check_key(key: &str) -> String {
-            format!(
-                "if self.{0}.is_some() {{\
-                    constraints.push((\"{0}\", &self.{0}));\
-                }}", key)
-        }
-
         format!(
             // TODO: should return an iterator, but this is getting complex
             "pub fn search(&self, conn: &Connection, limit: Option<uint>) -> Vec<{0}> {{\
-                let mut constraints: Vec<(&str, &ToSql)> = vec!();
+                let mut constraints: Vec<(&str, &ToSql)> = vec!();\
                 {1}\
                 let mut query = {2}.to_string();\
                 let len = constraints.len();\
                 if len > 0 {{\
                     query.push_str(\" WHERE \");\
-                    query.push_str(
-                        constraints.iter().zip(range(1, len + 1)).map(\
-                            |(&(k, _), i)| format!(\
-                                \"{{}} = ${{}}\",\
-                                k, i)).join(\" AND \").as_slice());\
+                    query.push_str({3}.as_slice());\
                 }}\
                 limit.map(|l| query.push_str(format!(\" LIMIT {{}}\", l).as_slice()));\
                 let rows = conn.prepare(query.as_slice()).unwrap();\
                 let values_vec: Vec<&ToSql> = \
                     constraints.iter().map(|&(_, v)| v).collect();\
                 rows.query(values_vec.as_slice()).unwrap().map(|row| {{\
-                    {0} {{ {3} }}\
+                    {0} {{ {4} }}\
                 }}).collect()
             }}",
             self.full_name.as_slice(),
-            keys.iter().map(|k| check_key(k.as_slice())).join("\n"),
+            TableDefinition::build_multi_constraint_push(
+                &keys,
+                "constraints",
+                |k| k.to_string()),
             base_query,
+            TableDefinition::build_clause(
+                "constraints", "1", "len + 1", " AND "),
             keys.iter().zip(range(0, keys.len())).map(|(k, i)| {
                 format!("{}: row.get({})", k.as_slice(), i)
             }).join(", "))
     }
+
+    fn update_implementation_body(&self) -> String {
+        let set_keys = self.schema_keys_filter(|k| k != "id");
+        let where_keys = self.all_schema_keys();
+
+        let base_query =
+            format!("\"UPDATE {} SET \"", self.table_name.as_slice());
+
+        format!(
+            "pub fn update(&self, conn: &Connection) -> uint {{\
+                let mut set_cons: Vec<(&str, &ToSql)> = vec!();\
+                let mut where_cons: Vec<(&str, &ToSql)> = vec!();\
+                {0}\
+                {1}\
+                let set_cons_len = set_cons.len();
+                if set_cons_len > 0 {{\
+                    let mut query = {2}.to_string();\
+                    query.push_str({3}.as_slice());\
+                    let where_cons_len = where_cons.len();
+                    if where_cons_len > 0 {{\
+                        query.push_str(\" WHERE \");\
+                        query.push_str({4}.as_slice());\
+                    }}\
+
+                    let mut values: Vec<&ToSql> = \
+                        set_cons.iter().map(|&(_, v)| v).collect();\
+                    let where_values: Vec<&ToSql> = \
+                        where_cons.iter().map(|&(_, v)| v).collect();\
+                    values.push_all(where_values.as_slice());\
+                    conn.execute(query.as_slice(), values.as_slice()).unwrap()\
+                }} else {{ 0 }}\
+            }}",
+            TableDefinition::build_multi_constraint_push(
+                &set_keys,
+                "set_cons",
+                |k| format!("{}_to", k)),
+            TableDefinition::build_multi_constraint_push(
+                &where_keys,
+                "where_cons",
+                |k| format!("where_{}", k)),
+            base_query,
+            TableDefinition::build_clause(
+                "set_cons", "1", "set_cons_len + 1", ", "),
+            TableDefinition::build_clause(
+                "where_cons", "set_cons_len + 1",
+                "set_cons_len + 1 + where_cons_len", " AND "))
+    } // update_implementation_body
 
     fn all_items(&self) -> Vec<P<Item>> {
         let mut retval = vec!();
@@ -284,7 +375,7 @@ impl<'a> TableDefinition<'a> {
             &Full => None,
             &Insert => Some(self.insert_implementation_body()),
             &Search => Some(self.search_implementation_body()),
-            &Update => None // TODO: implement this
+            &Update => Some(self.update_implementation_body())
         }
     }
 
@@ -292,7 +383,7 @@ impl<'a> TableDefinition<'a> {
         self.implementation_body(kind).map(|body| {
             let name = self.name_for_kind(kind);
             parse_item_from_source_str(
-                format!("implgen{}", name.as_slice()),
+                format!("implgen-{}", name.as_slice()),
                 format!("impl {} {{ {} }}", name, body),
                 self.cfg.clone(),
                 self.session).unwrap()
