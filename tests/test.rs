@@ -4,6 +4,8 @@ extern crate pg_typeprovider;
 
 // TODO: this is very weird; I need to put this in a module, and pg_typeprovider
 // must be put in twice.  This might be a bug in Rust; ask Jared.
+
+// TODO: teardown database
 mod testing {
     extern crate core;
     extern crate time;
@@ -104,7 +106,7 @@ mod testing {
 
         assert_eq!(in_db.last_name.as_slice(), "Dewey");
 
-        let id = in_db.id; // HACK - add accessor to User
+        let id = in_db.get_id();
         let update =
             UserUpdate {
                 where_id: Some(id), 
@@ -143,7 +145,7 @@ mod testing {
 
         let in_db2 = &matching2[0];
 
-        assert_eq!(in_db2.id, id);
+        assert_eq!(in_db2.get_id(), id);
         assert_eq!(in_db2.first_name.as_slice(), "billy");
         assert_eq!(in_db2.last_name.as_slice(), "bob");
     }

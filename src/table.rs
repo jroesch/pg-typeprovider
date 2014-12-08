@@ -208,6 +208,10 @@ impl<'a> TableDefinition<'a> {
         self.schema.keys().filter(|k| f(k.as_slice())).collect()
     }
 
+    fn full_implementation_body(&self) -> String {
+        "pub fn get_id(&self) -> i32 { self.id }".to_string()
+    }
+
     fn insert_implementation_body(&self) -> String {
         let keys = self.schema_keys_filter(|k| k != "id");
         let query_base =
@@ -372,7 +376,7 @@ impl<'a> TableDefinition<'a> {
 
     fn implementation_body(&self, kind: &TableKind) -> Option<String> {
         match kind {
-            &Full => None,
+            &Full => Some(self.full_implementation_body()),
             &Insert => Some(self.insert_implementation_body()),
             &Search => Some(self.search_implementation_body()),
             &Update => Some(self.update_implementation_body())
