@@ -230,7 +230,7 @@ impl<'a> TableDefinition<'a> {
 
         format!(
             "#[allow(dead_code)]\n\
-             pub fn insert(self, conn: &Connection) {{\
+             pub fn insert(&self, conn: &Connection) {{\
                 conn.execute({}, &[{}]).unwrap();\
             }}",
             query_base,
