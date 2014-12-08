@@ -368,30 +368,27 @@ impl<'a> TableDefinition<'a> {
     }
 
     fn items_for(&self, kind: &TableKind) -> Vec<P<Item>> {
-        let mut retval = vec!();
-        retval.push(self.struct_definition_for(kind));
-        self.struct_implementation_for(kind).map(|i| retval.push(i));
-        retval
+        vec!(self.struct_definition_for(kind),
+             self.struct_implementation_for(kind))
     }
 
-    fn implementation_body(&self, kind: &TableKind) -> Option<String> {
+    fn implementation_body(&self, kind: &TableKind) -> String {
         match kind {
-            &Full => Some(self.full_implementation_body()),
-            &Insert => Some(self.insert_implementation_body()),
-            &Search => Some(self.search_implementation_body()),
-            &Update => Some(self.update_implementation_body())
+            &Full => self.full_implementation_body(),
+            &Insert => self.insert_implementation_body(),
+            &Search => self.search_implementation_body(),
+            &Update => self.update_implementation_body()
         }
     }
 
-    fn struct_implementation_for(&self, kind: &TableKind) -> Option<P<Item>> {
-        self.implementation_body(kind).map(|body| {
-            let name = self.name_for_kind(kind);
-            parse_item_from_source_str(
-                format!("implgen-{}", name.as_slice()),
-                format!("impl {} {{ {} }}", name, body),
-                self.cfg.clone(),
-                self.session).unwrap()
-        })
+    fn struct_implementation_for(&self, kind: &TableKind) -> P<Item> {
+        let body = self.implementation_body(kind);
+        let name = self.name_for_kind(kind);
+        parse_item_from_source_str(
+            format!("implgen-{}", name.as_slice()),
+            format!("impl {} {{ {} }}", name, body),
+            self.cfg.clone(),
+            self.session).unwrap()
     }
 } // TableDefinition
 
