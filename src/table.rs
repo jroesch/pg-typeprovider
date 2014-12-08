@@ -278,33 +278,59 @@ impl<'a> TableDefinition<'a> {
             join_on)
     }
 
+    fn chain_implementation(&self,
+                            fn_name: &str,
+                            table_field_name: &str,
+                            struct_field_name: &str,
+                            ret_typ: &str) -> String {
+        format!(
+            "#[allow(dead_code)]\n\
+             pub fn {0}<'a>(&'a mut self, p: {1}) -> &'a mut {2} {{\
+                 self.{3} = Some(p);\
+                 self\
+             }}",
+            fn_name,
+            self.field_type(table_field_name),
+            ret_typ,
+            struct_field_name)
+    }
+
+    fn chain_implementations(&self,
+                             keys: &Vec<&String>,
+                             fn_name_builder: |&str| -> String,
+                             struct_field_name_builder: |&str| -> String,
+                             typ: &str) -> String {
+        keys.iter().map(|k| {
+            let sliced = k.as_slice();
+            self.chain_implementation(
+                fn_name_builder(sliced).as_slice(),
+                sliced,
+                struct_field_name_builder(sliced).as_slice(),
+                typ)
+        }).join("\n")
+    }
+
     fn search_implementation_body(&self) -> String {
         let keys = self.all_schema_keys();
         let base_query =
             format!("\"SELECT {} FROM {}\"",
                     keys.iter().join(", "),
                     self.table_name.as_slice());
-        let new_fn = format!(
-            "#[allow(dead_code)]\n\
-             pub fn new() -> {0} {{ {0} {{ {1} }} }}",
-            self.search_name.as_slice(),
-            keys.iter().map(|k| {
-                format!("{}: None", k.as_slice())
-            }).join(", "));
+        let new_fn = 
+            format!(
+                "#[allow(dead_code)]\n\
+                 pub fn new() -> {0} {{ {0} {{ {1} }} }}",
+                self.search_name.as_slice(),
+                keys.iter().map(|k| {
+                    format!("{}: None", k.as_slice())
+                }).join(", "));
         
-        let with_fns =
-            keys.iter().map(|k| {
-                format!(
-                    "#[allow(dead_code)]\n\
-                     pub fn with_{0}<'a>(&'a mut self, p: {1}) -> &'a mut {2} {{\
-                        self.{0} = Some(p);\
-                        self\
-                    }}",
-                    k.as_slice(),
-                    self.field_type(k.as_slice()),
-                    self.search_name.as_slice())
-            }).join("\n");
-                
+        let where_fns = self.chain_implementations(
+            &keys,
+            |k| format!("where_{}", k),
+            |k| k.to_string(),
+            self.search_name.as_slice());
+        
         let search_fn = format!(
             // TODO: should return an iterator, but this is getting complex
             "#[allow(dead_code)]\n\
@@ -337,17 +363,39 @@ impl<'a> TableDefinition<'a> {
                 format!("{}: row.get({})", k.as_slice(), i)
             }).join(", "));
 
-        (vec!(new_fn, with_fns, search_fn)).iter().join("\n")
+        (vec!(new_fn, where_fns, search_fn)).iter().join("\n")
     }
 
     fn update_implementation_body(&self) -> String {
         let set_keys = self.schema_keys_filter(|k| k != "id");
         let where_keys = self.all_schema_keys();
-
+        let update_name = self.update_name.as_slice();
         let base_query =
             format!("\"UPDATE {} SET \"", self.table_name.as_slice());
 
-        format!(
+        let new_fn = format!(
+            "#[allow(dead_code)]\n\
+             pub fn new() -> {0} {{ {0} {{ {1} }} }}",
+            update_name,
+            set_keys.iter().map(|k| {
+                format!("{}_to: None", k.as_slice())
+            }).chain(where_keys.iter().map(|k| {
+                format!("where_{}: None", k.as_slice())
+            })).join(", "));
+        
+        let where_fns = self.chain_implementations(
+            &where_keys,
+            |k| format!("where_{}", k),
+            |k| format!("where_{}", k),
+            update_name);
+
+        let set_fns = self.chain_implementations(
+            &set_keys,
+            |k| format!("{}_to", k),
+            |k| format!("{}_to", k),
+            update_name);
+
+        let update_fn = format!(
             "#[allow(dead_code)]\n\
              pub fn update(&self, conn: &Connection) -> uint {{\
                 let mut set_cons: Vec<(&str, &ToSql)> = vec!();\
@@ -385,7 +433,9 @@ impl<'a> TableDefinition<'a> {
                 "set_cons", "1", "set_cons_len + 1", ", "),
             TableDefinition::build_clause(
                 "where_cons", "set_cons_len + 1",
-                "set_cons_len + 1 + where_cons_len", " AND "))
+                "set_cons_len + 1 + where_cons_len", " AND "));
+
+        (vec!(new_fn, where_fns, set_fns, update_fn)).iter().join("\n")
     } // update_implementation_body
 
     fn all_items(&self) -> Vec<P<Item>> {

@@ -27,13 +27,13 @@ mod testing {
 
     #[test]
     fn test_search_template_builder_id() {
-        assert_eq!(UserSearch::new().with_id(7).id, Some(7));
+        assert_eq!(UserSearch::new().where_id(7).id, Some(7));
     }
 
     #[test]
     fn test_search_template_builder_first_name() {
         assert_eq!(
-            UserSearch::new().with_first_name("kyle".to_string()).first_name,
+            UserSearch::new().where_first_name("kyle".to_string()).first_name,
             Some("kyle".to_string()));
     }
 
