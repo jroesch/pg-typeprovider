@@ -12,5 +12,5 @@ time = "0.1"
 
 [lib]
 name = "pg_typeprovider"
-path = "src/table.rs"
+path = "src/lib.rs"
 crate-type = ["dylib"]

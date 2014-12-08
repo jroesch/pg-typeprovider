@@ -1,2 +1,7 @@
+# Made by Cargo
 /target
 /Cargo.lock
+
+# Emacs temp files
+\#*\#
+*~
