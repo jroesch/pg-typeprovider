@@ -25,6 +25,18 @@ mod testing {
             "postgres://jroesch@localhost/gradr-test", &SslMode::None).unwrap()
     }
 
+    #[test]
+    fn test_search_template_builder_id() {
+        assert_eq!(UserSearch::new().with_id(7).id, Some(7));
+    }
+
+    #[test]
+    fn test_search_template_builder_first_name() {
+        assert_eq!(
+            UserSearch::new().with_first_name("kyle".to_string()).first_name,
+            Some("kyle".to_string()));
+    }
+
     // TODO: this currently will modify the database and leave it in an
     // unclean state.
     #[test]

@@ -138,16 +138,18 @@ impl<'a> TableDefinition<'a> {
         }
     }
 
+    fn field_type(&self, field_name: &str) -> String {
+        self.schema.get(field_name).unwrap().to_rust_type()
+    }
+
     // Given a field name in a table and the kind of table it is for, returns
     // triples for:
     // -If the field is public in the struct
     // -The name of the field in the struct
     // -The type of the struct field, as a String
     fn field_projection(&self, field_name: &str, kind: &TableKind) -> Vec<(bool, String, String)> {
-        assert!(self.schema.contains_key(field_name));
-        
         let name = field_name.to_string();
-        let typ = self.schema.get(field_name).unwrap().to_rust_type();
+        let typ = self.field_type(field_name);
         let op_typ = format!("Option<{}>", typ.as_slice());
 
         match kind {
@@ -209,7 +211,8 @@ impl<'a> TableDefinition<'a> {
     }
 
     fn full_implementation_body(&self) -> String {
-        "pub fn get_id(&self) -> i32 { self.id }".to_string()
+        "#[allow(dead_code)]\n\
+         pub fn get_id(&self) -> i32 { self.id }".to_string()
     }
 
     fn insert_implementation_body(&self) -> String {
@@ -226,7 +229,8 @@ impl<'a> TableDefinition<'a> {
         }).join(", ");
 
         format!(
-            "pub fn insert(self, conn: &Connection) {{\
+            "#[allow(dead_code)]\n\
+             pub fn insert(self, conn: &Connection) {{\
                 conn.execute({}, &[{}]).unwrap();\
             }}",
             query_base,
@@ -280,9 +284,31 @@ impl<'a> TableDefinition<'a> {
             format!("\"SELECT {} FROM {}\"",
                     keys.iter().join(", "),
                     self.table_name.as_slice());
-        format!(
+        let new_fn = format!(
+            "#[allow(dead_code)]\n\
+             pub fn new() -> {0} {{ {0} {{ {1} }} }}",
+            self.search_name.as_slice(),
+            keys.iter().map(|k| {
+                format!("{}: None", k.as_slice())
+            }).join(", "));
+        
+        let with_fns =
+            keys.iter().map(|k| {
+                format!(
+                    "#[allow(dead_code)]\n\
+                     pub fn with_{0}<'a>(&'a mut self, p: {1}) -> &'a mut {2} {{\
+                        self.{0} = Some(p);\
+                        self\
+                    }}",
+                    k.as_slice(),
+                    self.field_type(k.as_slice()),
+                    self.search_name.as_slice())
+            }).join("\n");
+                
+        let search_fn = format!(
             // TODO: should return an iterator, but this is getting complex
-            "pub fn search(&self, conn: &Connection, limit: Option<uint>) -> Vec<{0}> {{\
+            "#[allow(dead_code)]\n\
+             pub fn search(&self, conn: &Connection, limit: Option<uint>) -> Vec<{0}> {{\
                 let mut constraints: Vec<(&str, &ToSql)> = vec!();\
                 {1}\
                 let mut query = {2}.to_string();\
@@ -309,7 +335,9 @@ impl<'a> TableDefinition<'a> {
                 "constraints", "1", "len + 1", " AND "),
             keys.iter().zip(range(0, keys.len())).map(|(k, i)| {
                 format!("{}: row.get({})", k.as_slice(), i)
-            }).join(", "))
+            }).join(", "));
+
+        (vec!(new_fn, with_fns, search_fn)).iter().join("\n")
     }
 
     fn update_implementation_body(&self) -> String {
@@ -320,7 +348,8 @@ impl<'a> TableDefinition<'a> {
             format!("\"UPDATE {} SET \"", self.table_name.as_slice());
 
         format!(
-            "pub fn update(&self, conn: &Connection) -> uint {{\
+            "#[allow(dead_code)]\n\
+             pub fn update(&self, conn: &Connection) -> uint {{\
                 let mut set_cons: Vec<(&str, &ToSql)> = vec!();\
                 let mut where_cons: Vec<(&str, &ToSql)> = vec!();\
                 {0}\
