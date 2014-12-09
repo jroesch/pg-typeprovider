@@ -230,7 +230,7 @@ impl<'a> TableDefinition<'a> {
 
         format!(
             "#[allow(dead_code)]\n\
-             pub fn insert(&self, conn: &Connection) {{\
+             pub fn insert(&self, conn: &GenericConnection) {{\
                 conn.execute({}, &[{}]).unwrap();\
             }}",
             query_base,
@@ -334,7 +334,7 @@ impl<'a> TableDefinition<'a> {
         let search_fn = format!(
             // TODO: should return an iterator, but this is getting complex
             "#[allow(dead_code)]\n\
-             pub fn search(&self, conn: &Connection, limit: Option<uint>) -> Vec<{0}> {{\
+             pub fn search(&self, conn: &GenericConnection, limit: Option<uint>) -> Vec<{0}> {{\
                 let mut constraints: Vec<(&str, &ToSql)> = vec!();\
                 {1}\
                 let mut query = {2}.to_string();\
@@ -397,7 +397,7 @@ impl<'a> TableDefinition<'a> {
 
         let update_fn = format!(
             "#[allow(dead_code)]\n\
-             pub fn update(&self, conn: &Connection) -> uint {{\
+             pub fn update(&self, conn: &GenericConnection) -> uint {{\
                 let mut set_cons: Vec<(&str, &ToSql)> = vec!();\
                 let mut where_cons: Vec<(&str, &ToSql)> = vec!();\
                 {0}\

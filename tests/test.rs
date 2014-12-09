@@ -14,7 +14,7 @@ mod testing {
 
     use self::time::{now, Timespec};
 
-    use self::postgres::{Connection, SslMode, ToSql};
+    use self::postgres::{Connection, GenericConnection, SslMode, ToSql};
 
     use self::pg_typeprovider::util::Joinable;
 
