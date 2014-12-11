@@ -1,6 +1,7 @@
 extern crate syntax;
 extern crate rustc;
 extern crate postgres;
+extern crate openssl;
 
 use self::syntax::ast::{Item, TokenTree, CrateConfig};
 use self::syntax::ast::TokenTree::TtToken;
@@ -16,6 +17,8 @@ use self::postgres::{Connection, SslMode};
 use std::collections::HashMap;
 
 use util::Joinable;
+
+use self::openssl::ssl::{SslContext, SslMethod};
 
 use self::PgType::{PgInt, PgBool, PgString, PgTime};
 use self::TableKind::{Full, Insert, Search, Update};
@@ -111,7 +114,9 @@ fn schema_for(conn: Connection, table_name: &str) -> HashMap<String, PgType> {
 
 impl<'a> TableDefinition<'a> {
     fn new<'a>(connect_str: &'a str, actual_name: &'a str, cfg: &'a CrateConfig, sess: &'a ParseSess) -> TableDefinition<'a> {
-        let conn = Connection::connect(connect_str, &SslMode::None).unwrap();
+        let conn = Connection::connect(
+            connect_str,
+            &SslMode::Require(SslContext::new(SslMethod::Sslv23).unwrap())).unwrap();
         let schema = schema_for(conn, actual_name);
         assert!(schema.contains_key(&"id".to_string()));
         assert_eq!(schema.get(&"id".to_string()).unwrap(), &PgInt);
