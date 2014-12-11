@@ -4,11 +4,10 @@ extern crate postgres;
 extern crate openssl;
 
 use self::syntax::ast::{Item, TokenTree, CrateConfig};
-use self::syntax::ast::TokenTree::TtToken;
 use self::syntax::ptr::P;
 use self::syntax::parse::{parse_item_from_source_str, ParseSess};
 use self::syntax::parse::token::get_ident;
-use self::syntax::parse::token::Token::Ident;
+use self::syntax::parse::token::Token::{Comma, Eof};
 use self::syntax::ext::base::{ExtCtxt, MacResult, DummyResult, MacItems};
 use self::syntax::codemap::Span;
 use self::rustc::plugin::Registry;
@@ -476,18 +475,37 @@ impl<'a> TableDefinition<'a> {
     }
 } // TableDefinition
 
-fn expand_pg_table(cx: &mut ExtCtxt, sp: Span, args: &[TokenTree]) -> Box<MacResult + 'static> {
-    // Get the table name.
-    let table_name_string = match args {
-        [TtToken(_, Ident(s, _))] => get_ident(s).to_string(),
-        _ => {
-            cx.span_err(sp, "argument should be a single identifier");
-            return DummyResult::any(sp);
+// Returns the table name and the connect string
+fn parse_args(cx: &ExtCtxt, sp: Span, args: &[TokenTree]) -> Option<(String, String)> {
+    let mut parser = cx.new_parser_from_tts(args);
+    let table_name = get_ident(parser.parse_ident()).to_string();
+    
+    if !parser.eat(&Comma) {
+        cx.span_err(sp, "expected string literal");
+        None
+    } else {
+        let connect_string = parser.parse_str().val0().to_string();
+        if parser.token != Eof {
+            cx.span_err(sp, "extra parameters passed");
+            None
+        } else {
+            Some((table_name, connect_string))
         }
-    };
+    }
+}
+    
+fn expand_pg_table(cx: &mut ExtCtxt, sp: Span, args: &[TokenTree]) -> Box<MacResult + 'static> {
+    let (table_name_string, connect_string) = 
+        match parse_args(&*cx, sp, args) {
+            Some(tup) => tup,
+            None => {
+                cx.span_err(sp, "needs a table name and a connect string literal");
+                return DummyResult::any(sp);
+            }
+        };
 
     let table_def = TableDefinition::new(
-        "postgres://jroesch@localhost/gradr-production",
+        connect_string.as_slice(),
         table_name_string.as_slice(),
         &cx.cfg,
         cx.parse_sess);

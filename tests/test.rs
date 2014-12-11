@@ -11,18 +11,21 @@ mod testing {
     extern crate time;
     extern crate postgres;
     extern crate pg_typeprovider;
+    extern crate openssl;
 
     use self::time::{now, Timespec};
 
     use self::postgres::{Connection, GenericConnection, SslMode, ToSql};
+    use self::openssl::ssl::{SslContext, SslMethod};
 
     use self::pg_typeprovider::util::Joinable;
 
-    pg_table!(users)
+    pg_table!(users, "postgres://jroesch@localhost/gradr-test")
 
     fn make_conn() -> Connection {
         Connection::connect(
-            "postgres://jroesch@localhost/gradr-test", &SslMode::None).unwrap()
+            "postgres://jroesch@localhost/gradr-test",
+            &SslMode::Require(SslContext::new(SslMethod::Sslv23).unwrap())).unwrap()
     }
 
     #[test]
