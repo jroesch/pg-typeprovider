@@ -9,6 +9,7 @@ git = "https://github.com/sfackler/rust-postgres.git"
 
 [dependencies]
 time = "0.1"
+openssl = "0.2.1"
 
 [lib]
 name = "pg_typeprovider"
